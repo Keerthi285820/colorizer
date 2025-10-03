@@ -1,22 +1,25 @@
 import streamlit as st
-import torch, torch.nn as nn, torchvision.transforms as T
-from PIL import Image, ImageDraw
+import torch
+import torch.nn as nn
+import torchvision.transforms as T
+from PIL import Image, ImageDraw, ImageFont
 import io
 
-# 1. Simple Dummy Model (No weights, no base64)
+# 1. Simple Dummy Model (demo — grayscale ➜ faint “color” tint)
 class DummyGenerator(nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv = nn.Conv2d(1, 3, 3, 1, 1)  # Grayscale -> RGB
+        self.conv = nn.Conv2d(1, 3, 3, 1, 1)  # placeholder layer
     def forward(self, x):
-        # Fake colorization: repeat grayscale with slight color shift
-        return x.repeat(1, 3, 1, 1) * 0.7 + 0.15  # Faint color tint
+        # Fake colorization: just replicate grayscale with slight boost
+        return x.repeat(1, 3, 1, 1) * 0.7 + 0.15
 
-# 2. Local Placeholder Image (No internet)
+# 2. Local Placeholder Image (fixed font handling!)
 def create_placeholder():
     img = Image.new('RGB', (300, 200), color='#333')
     draw = ImageDraw.Draw(img)
-    draw.text((50, 80), "Upload B&W Image", fill='white', font=Image.font(size=20))
+    font = ImageFont.load_default()  # safe fallback font
+    draw.text((50, 80), "Upload B&W Image", fill='white', font=font)
     return img
 
 # 3. Streamlit UI
@@ -31,6 +34,9 @@ with st.sidebar:
     st.write("Model: Dummy Generator (Demo only)")
     st.info("Real colorization requires trained weights. See code comments for integration.")
 
+# Load model once globally
+model = DummyGenerator().eval()
+
 # Image upload
 uploaded = st.file_uploader("Upload B&W Image", type=["jpg","png","jpeg","bmp"], label_visibility="collapsed")
 
@@ -41,7 +47,6 @@ if uploaded:
         orig_size = img.size
         img_resized = img.resize((resize_val, resize_val), Image.LANCZOS)
         
-        # Transform for model
         transform = T.Compose([
             T.ToTensor(),
             T.Normalize((0.5,), (0.5,)),
@@ -49,13 +54,13 @@ if uploaded:
         ])
         input_tensor = transform(img_resized)
         
-        # Run inference (dummy - no base64)
-        model = DummyGenerator()
+        # Inference
         with torch.no_grad():
             output = model(input_tensor)
-        output_img = T.ToPILImage()(output.squeeze(0) * 0.5 + 0.5)
+        output = torch.clamp(output, 0, 1)  # keep safe range
+        output_img = T.ToPILImage()(output.squeeze(0))
         
-        # Post-process: resize to original
+        # Post-process: resize back to original
         final_img = output_img.resize(orig_size, Image.LANCZOS)
         
         # Display results
@@ -71,10 +76,10 @@ if uploaded:
         buf = io.BytesIO()
         final_img.save(buf, 'PNG')
         st.download_button("Download Demo Image", buf.getvalue(), 
-                          file_name=f"demo_{uploaded.name}", mime="image/png")
+                           file_name=f"demo_{uploaded.name}", mime="image/png")
     
     except Exception as e:
-        st.error(f"Processing failed: {e}")
+        st.error("Processing failed")
         st.exception(e)
 else:
     st.info("⬆️ Upload a B&W image to start")
@@ -86,16 +91,12 @@ st.markdown("---")
 st.caption("Built with Streamlit + PyTorch | Demo mode only")
 
 # 4. Real Model Integration (Optional)
-# To use a real model, replace DummyGenerator with your trained model
-# and load weights from a local file. Example:
-#
-# class RealGenerator(nn.Module):
-#     def __init__(self): ...  # Your GAN architecture
-#     def forward(self, x): ... # Real inference logic
+# To use a trained model, replace DummyGenerator with your own model class
+# and load weights from a file, e.g.:
 #
 # def load_real_model():
 #     model = RealGenerator()
-#     model.load_state_dict(torch.load("weights.pth", map_location="cpu"))
+#     model.load_state_dict(torch.load('weights.pth', map_location='cpu'))
 #     return model.eval()
 #
-# Replace model = DummyGenerator() with model = load_real_model()
+# model = load_real_model()
